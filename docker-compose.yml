@@ -1,0 +1,65 @@
+services:
+  pc_5:
+    build: .
+    container_name: PC_5
+    hostname: PC_5
+    cap_add: [NET_ADMIN]
+    command: ["/opt/lab/pc-init.sh", "10.5.0.2", "10.5.0.1"]
+    networks:
+      lan5:
+        ipv4_address: 10.5.0.2
+
+  comm_5:
+    build: .
+    container_name: COMM_5
+    hostname: COMM_5
+    privileged: true
+    command: ["/opt/lab/comm-init.sh", "5"]
+    networks:
+      lan5:
+        ipv4_address: 10.5.0.1
+      backbone:
+        ipv4_address: 10.100.0.5
+
+  comm_6:
+    build: .
+    container_name: COMM_6
+    hostname: COMM_6
+    privileged: true
+    command: ["/opt/lab/comm-init.sh", "6"]
+    networks:
+      lan6:
+        ipv4_address: 10.6.0.1
+      backbone:
+        ipv4_address: 10.100.0.6
+
+  pc_6:
+    build: .
+    container_name: PC_6
+    hostname: PC_6
+    cap_add: [NET_ADMIN]
+    command: ["/opt/lab/pc-init.sh", "10.6.0.2", "10.6.0.1"]
+    networks:
+      lan6:
+        ipv4_address: 10.6.0.2
+
+networks:
+  lan5:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.5.0.0/24
+          gateway: 10.5.0.254
+  lan6:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.6.0.0/24
+          gateway: 10.6.0.254
+  backbone:
+    driver: bridge
+    internal: true
+    ipam:
+      config: [{subnet: 10.100.0.0/24}]
