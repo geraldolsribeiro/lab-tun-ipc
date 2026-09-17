@@ -11,6 +11,26 @@
  * TCP program: its TCP endpoints are still PC_5 and PC_6.  None of these
  * programs parses TCP, UDP, or ICMP; they forward opaque IP packet buffers.
  *
+ * IMPORTANT SETUP NOTE:
+ * This source moves packets, but it does not configure the network topology.
+ * Docker must provide /dev/net/tun and the COMM container must have the
+ * privilege/CAP_NET_ADMIN needed for TUNSETIFF.  Outside this file,
+ * comm-init.sh enables IPv4 forwarding, disables reverse-path filtering,
+ * brings tun0 up, and adds the remote-LAN route via `ip route`.  pc-init.sh
+ * changes each PC's default gateway to its local COMM address.  Without those
+ * routes, packets never reach TUN; without forwarding/rp_filter setup, Linux
+ * may drop packets even when the applications are running.
+ *
+ * Traffic direction detail:
+ * - A packet arriving from a PC on the COMM LAN veth is routed by Linux to
+ *   tun0 because the remote-LAN route is more specific than the default route.
+ * - Reading the TUN descriptor removes the packet from the kernel-to-userspace
+ *   queue; APP_SRC sends it through IPC and APP_F sends it over UDP.
+ * - Writing a received packet to TUN injects it into the kernel. Linux then
+ *   routes it out the COMM LAN veth, where the Docker bridge turns it into an
+ *   Ethernet frame delivered to the destination PC. Writing to TUN is not
+ *   itself an Ethernet transmission: Linux routing performs that final step.
+ *
  * This single executable contains all three programs to make comparison with
  * the Python reference easy.  The first argument selects the role:
  *   apps_cpp src tun0 src_to_f.sock dst_to_src.sock
