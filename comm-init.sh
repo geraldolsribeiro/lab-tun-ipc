@@ -44,7 +44,8 @@ else
   python3 /opt/lab/app_f.py \
     --src-ipc /run/comm/src_to_f.sock \
     --dst-ipc /run/comm/f_to_dst.sock \
-    --bind "$LOCAL_BB:5000" --peer "$REMOTE_BB:5000" &
+    --bind "$LOCAL_BB:5000" --peer "$REMOTE_BB:5000" \
+    --payload "${APP_F_PAYLOAD:-1600}" &
 fi
 F_PID=$!
 

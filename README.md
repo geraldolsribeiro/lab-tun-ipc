@@ -104,6 +104,23 @@ make tcpdump
 `APP_LANG` only controls the applications inside `COMM_5` and `COMM_6`.
 `PC_5` and `PC_6` always use the same Ubuntu tools and network configuration.
 
+## Fixed-size APP_F payloads and packet framing
+
+`APP_F` can be configured with a fixed UDP payload size from 28 to 11,200
+bytes. Set the same value in both COMM containers with `APP_F_PAYLOAD`:
+
+```sh
+APP_LANG=python APP_F_PAYLOAD=1600 docker compose up -d --build
+```
+
+An IP packet is prefixed with a 4-byte network-order length. APP_F packs one
+or more length-prefixed packets into each payload and pads the final payload
+with zero bytes. A packet may cross payload boundaries. The receiving APP_F
+buffers payloads, removes padding, reads each length prefix, and forwards only
+complete packets to APP_DST in their original order. No partial packet is ever
+written to TUN. This preserves packet boundaries while meeting the fixed-size
+UDP requirement.
+
 ## How traffic moves between Ethernet and TUN
 
 Docker creates virtual Ethernet (`veth`) interfaces for each container network.
@@ -209,13 +226,13 @@ iperf v2, PC_5 -> PC_6:
 
 ```sh
 docker exec -d PC_6 iperf -s
-docker exec PC_5 iperf -c 10.6.0.2 -t 10
+docker exec PC_5 iperf -c 10.6.0.2 -b 40m -t 10
 ```
 
 Reverse application direction, PC_6 -> PC_5:
 
 ```sh
-docker exec PC_6 iperf -c 10.5.0.2 -t 10
+docker exec PC_6 iperf -c 10.5.0.2 -b 40m -t 10
 ```
 
 iperf v2 bidirectional/dual test:

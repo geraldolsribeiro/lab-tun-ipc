@@ -32,7 +32,7 @@ ping:
 
 iperf:
 	docker exec -d $(PC6) iperf -s
-	docker exec $(PC5) iperf -c 10.6.0.2 -t 10
+	docker exec $(PC5) iperf -c 10.6.0.2 -b 40m -t 10
 
 tcpdump:
 	docker exec $(COMM5) tcpdump -ni any udp port 5000

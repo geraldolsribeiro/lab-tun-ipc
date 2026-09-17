@@ -16,6 +16,7 @@ services:
     privileged: true
     environment:
       APP_LANG: ${APP_LANG:-python}
+      APP_F_PAYLOAD: ${APP_F_PAYLOAD:-1600}
     command: ["/opt/lab/comm-init.sh", "5"]
     networks:
       lan5:
@@ -30,6 +31,7 @@ services:
     privileged: true
     environment:
       APP_LANG: ${APP_LANG:-python}
+      APP_F_PAYLOAD: ${APP_F_PAYLOAD:-1600}
     command: ["/opt/lab/comm-init.sh", "6"]
     networks:
       lan6:
