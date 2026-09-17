@@ -91,3 +91,29 @@ This is intentionally a functional lab implementation. For production/high-rate
 use, replace Python/Unix datagrams with the target C++ IPC mechanism, add framing,
 sequence numbers, MTU handling/fragmentation, loss/reordering policy, authentication,
 and metrics.
+
+
+ Created Makefile with automation for:
+
+ ```bash
+   make build
+   make up
+   make down
+   make restart
+   make ping
+   make iperf
+   make tcpdump
+   make logs
+   make ps
+   make clean
+   make help
+ ```
+
+ Default command:
+
+ ```bash
+   make
+ ```
+
+ runs make up.
+
