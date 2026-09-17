@@ -21,10 +21,88 @@ reserved for `COMM_5` and `COMM_6`, which act as the PCs' routers.
 
 ## Run
 
+The default implementation is Python:
+
 ```sh
 docker compose build
 docker compose up -d
 ```
+
+## Python and C++ implementations
+
+The project includes two interchangeable implementations of `APP_SRC`,
+`APP_F`, and `APP_DST`:
+
+- **Python**: `app_src.py`, `app_f.py`, and `app_dst.py`. This version is
+  intended to be easy to read and modify while learning the packet path.
+- **C++20**: `apps.cpp`. One executable contains all three roles and selects
+  the role through its first command-line argument. Docker compiles it as
+  `/opt/lab/apps_cpp` with optimization enabled.
+
+Both implementations use the same interfaces and protocol:
+
+```text
+TUN <-> Unix datagram IPC <-> UDP/5000 over the backbone <-> Unix IPC <-> TUN
+```
+
+### Run the Python implementation
+
+Python is the default when `APP_LANG` is omitted:
+
+```sh
+APP_LANG=python docker compose up -d --build
+```
+
+Equivalent Makefile commands:
+
+```sh
+make build
+make up
+```
+
+### Run the C++20 implementation
+
+Set `APP_LANG=cpp` for both COMM containers. The PC containers remain unchanged;
+they only generate and receive normal IP traffic:
+
+```sh
+docker compose down
+APP_LANG=cpp docker compose up -d --build
+```
+
+The C++ processes are started internally as:
+
+```text
+COMM_5: apps_cpp src ... / apps_cpp f ... / apps_cpp dst ...
+COMM_6: apps_cpp src ... / apps_cpp f ... / apps_cpp dst ...
+```
+
+### Compare the implementations
+
+Run the same test with each implementation and compare throughput and CPU use:
+
+```sh
+# Python test
+APP_LANG=python docker compose down
+APP_LANG=python docker compose up -d --build
+make ping
+make iperf
+
+# C++20 test
+APP_LANG=cpp docker compose down
+APP_LANG=cpp docker compose up -d --build
+make ping
+make iperf
+```
+
+To observe the UDP packet transport while testing:
+
+```sh
+make tcpdump
+```
+
+`APP_LANG` only controls the applications inside `COMM_5` and `COMM_6`.
+`PC_5` and `PC_6` always use the same Ubuntu tools and network configuration.
 
 If upgrading from an older compose file that used the default `.1` Docker
 network gateways, recreate the networks first:
