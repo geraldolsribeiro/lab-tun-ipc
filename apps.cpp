@@ -41,6 +41,7 @@
 #include <arpa/inet.h>    // inet_pton(): text IPv4 address -> binary address
 #include <cerrno>         // errno and standard POSIX error numbers
 #include <cstring>        // strerror(), strncpy()
+#include <cstdlib>        // getenv(), strtoul()
 #include <fcntl.h>        // open() and O_RDWR for /dev/net/tun
 #include <iostream>       // std::cerr
 #include <linux/if_tun.h> // TUNSETIFF, IFF_TUN, IFF_NO_PI
@@ -53,6 +54,7 @@
 #include <sys/socket.h>   // socket(), bind(), send(), recv()
 #include <sys/un.h>       // sockaddr_un: Unix-domain socket addresses
 #include <unistd.h> // open(), read(), write(), close(), unlink(), usleep()
+#include <vector>   // dynamic framing buffers
 
 // Maximum IPv4 packet size.  The theoretical IPv4 maximum is 65,535 bytes,
 // including its header.  This buffer is intentionally large enough for one
@@ -178,36 +180,74 @@ static void run_dst(const char *from_f, const char *to_src) {
   }
 }
 
-// APP_F bridges local IPC and the remote CMM_F over UDP on the backbone.
-// UDP is connectionless: sendto() names the destination on every datagram.
+// APP_F bridges local IPC and remote CMM_F over UDP. UDP datagrams must all
+// have exactly APP_F_PAYLOAD bytes, so packets are length-prefixed records
+// inside a small framing header. A record may cross frame boundaries.
 static void run_f(const char *from_src, const char *to_dst, const char *local,
                   const char *remote) {
+  constexpr unsigned FRAME_HEADER = 6; // 4-byte magic + 2-byte used length.
+  const std::string magic = "AF20";
+  unsigned payload = 1600;
+  if (const char *value = std::getenv("APP_F_PAYLOAD")) payload = std::stoul(value);
+  if (payload < 28 || payload > 11200 || payload <= FRAME_HEADER)
+    throw std::runtime_error("APP_F_PAYLOAD must be 28..11200");
+  const unsigned capacity = payload - FRAME_HEADER;
+
   int ipc_fd = make_unix_socket(from_src, true);
   int udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
-  if (udp_fd < 0)
-    throw std::runtime_error("socket(UDP): " + std::string(strerror(errno)));
-  auto local_address = parse_endpoint(local),
-       remote_address = parse_endpoint(remote);
-  if (bind(udp_fd, reinterpret_cast<sockaddr *>(&local_address),
-           sizeof(local_address)) < 0)
+  if (udp_fd < 0) throw std::runtime_error("socket(UDP): " + std::string(strerror(errno)));
+  auto local_address = parse_endpoint(local), remote_address = parse_endpoint(remote);
+  if (bind(udp_fd, reinterpret_cast<sockaddr *>(&local_address), sizeof(local_address)) < 0)
     throw std::runtime_error("bind(UDP): " + std::string(strerror(errno)));
-  char packet[MAX_PACKET_SIZE];
+
+  std::vector<unsigned char> pending, stream;
+  auto send_frame = [&](const unsigned char *data, unsigned used) {
+    std::vector<unsigned char> frame(payload, 0);
+    std::memcpy(frame.data(), magic.data(), 4);
+    frame[4] = static_cast<unsigned char>(used >> 8);
+    frame[5] = static_cast<unsigned char>(used);
+    std::memcpy(frame.data() + FRAME_HEADER, data, used);
+    sendto(udp_fd, frame.data(), frame.size(), 0,
+           reinterpret_cast<sockaddr *>(&remote_address), sizeof(remote_address));
+  };
+  auto flush = [&] {
+    while (pending.size() >= capacity) {
+      send_frame(pending.data(), capacity);
+      pending.erase(pending.begin(), pending.begin() + capacity);
+    }
+    if (!pending.empty()) { send_frame(pending.data(), pending.size()); pending.clear(); }
+  };
+
   pollfd watched[] = {{ipc_fd, POLLIN, 0}, {udp_fd, POLLIN, 0}};
   for (;;) {
     poll(watched, 2, -1);
     if (watched[0].revents & POLLIN) {
+      unsigned char packet[MAX_PACKET_SIZE];
       auto size = recv(ipc_fd, packet, sizeof(packet), 0);
-      if (size > 0)
-        sendto(udp_fd, packet, size, 0,
-               reinterpret_cast<sockaddr *>(&remote_address),
-               sizeof(remote_address));
+      if (size > 0) {
+        pending.push_back(static_cast<unsigned char>(size >> 24));
+        pending.push_back(static_cast<unsigned char>(size >> 16));
+        pending.push_back(static_cast<unsigned char>(size >> 8));
+        pending.push_back(static_cast<unsigned char>(size));
+        pending.insert(pending.end(), packet, packet + size);
+        flush();
+      }
     }
     if (watched[1].revents & POLLIN) {
-      auto size = recv(udp_fd, packet, sizeof(packet), 0);
-      if (size > 0) {
+      std::vector<unsigned char> frame(payload);
+      auto size = recv(udp_fd, frame.data(), frame.size(), 0);
+      if (size != static_cast<ssize_t>(payload) || std::memcmp(frame.data(), magic.data(), 4) != 0)
+        throw std::runtime_error("invalid fixed APP_F frame");
+      unsigned used = (frame[4] << 8) | frame[5];
+      if (used > capacity) throw std::runtime_error("invalid APP_F used length");
+      stream.insert(stream.end(), frame.begin() + FRAME_HEADER, frame.begin() + FRAME_HEADER + used);
+      while (stream.size() >= 4) {
+        unsigned length = (stream[0] << 24) | (stream[1] << 16) | (stream[2] << 8) | stream[3];
+        if (length < 1 || length > MAX_PACKET_SIZE) throw std::runtime_error("invalid packet length");
+        if (stream.size() < 4 + length) break;
         int dst_fd = make_unix_socket(to_dst, false);
-        send(dst_fd, packet, size, 0);
-        close(dst_fd);
+        send(dst_fd, stream.data() + 4, length, 0); close(dst_fd);
+        stream.erase(stream.begin(), stream.begin() + 4 + length);
       }
     }
   }
