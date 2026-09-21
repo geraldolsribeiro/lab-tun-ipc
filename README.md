@@ -215,12 +215,75 @@ docker exec CMM_6 ip addr
 docker exec PC_6 ip route
 ```
 
-Basic IP test:
+Basic IP and RTT test:
 
 ```sh
-docker exec PC_5 ping -c 3 10.6.0.2
-docker exec PC_6 ping -c 3 10.5.0.2
+docker exec PC_5 ping -c 10 -W 2 10.6.0.2
+docker exec PC_6 ping -c 10 -W 2 10.5.0.2
 ```
+
+The `make ping` target runs the first test with ten ICMP echo requests. The
+summary reports:
+
+```text
+rtt min/avg/max/mdev = MIN/AVERAGE/MAX/STDDEV ms
+```
+
+For each successful request, RTT is measured as the elapsed time from sending
+the ICMP Echo Request until receiving its Echo Reply. If the successful sample
+RTTs are `r_1 ... r_n`:
+
+- `min = min(r_i)` — fastest round trip.
+- `avg = (r_1 + ... + r_n) / n` — arithmetic mean RTT.
+- `max = max(r_i)` — slowest round trip.
+- `mdev` — ping's mean deviation statistic, representing typical variation
+  around the average; it is not additional network latency.
+- Packet loss is failed requests divided by total requests.
+
+The RTT includes both directions of the complete path: PC -> local CMM -> TUN
+and applications -> UDP backbone -> remote applications -> TUN -> remote PC,
+plus the return path. It therefore measures end-to-end tunnel latency rather
+than only UDP or application processing time.
+
+High-rate ping tests:
+
+Deterministic rate test, without flood mode:
+
+```sh
+make ping-rate
+```
+
+Stress test, with flood mode:
+
+```sh
+make ping-stress
+```
+
+Both tests send 1,000 ICMP requests with an 11,000-byte payload and a
+requested 2-millisecond interval:
+
+```sh
+ping -f -i 0.002 -s 11000 -c 1000 -W 2 10.6.0.2
+```
+
+`-s 11000` specifies the ICMP data size. The resulting IP packet is larger
+than the normal 1500-byte Ethernet MTU, so Linux may fragment it before APP_SRC
+reads the fragments from TUN. This stresses fixed-size APP_F framing,
+fragmentation/reassembly, throughput, and packet loss.
+
+`-i 0.002` requests one new echo request every 0.002 seconds, or up to 500
+requests per second. It is a pacing interval, not a packet-size option. The
+actual rate can be lower because of replies, CPU scheduling, routing, or packet
+loss. Privileged Linux ping permits very small intervals; unprivileged ping may
+reject them or enforce a larger minimum.
+
+`-f` enables flood mode. It asks ping to transmit as aggressively as possible
+and prints a compact progress display instead of one line per reply. When
+combined with `-i`, the explicit interval is the intended pacing limit, but
+exact precedence and minimum enforcement depend on the installed iputils ping
+version. Without `-f`, `-i 0.002` is the clearer deterministic rate test;
+with `-f`, the command intentionally stresses the implementation and may
+produce more load than the requested interval suggests.
 
 iperf v2, PC_5 -> PC_6:
 
