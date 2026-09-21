@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""APP_DST: the final IPC hop on the receiving COMM side.
+"""APP_DST: the final IPC hop on the receiving CMM side.
 
 APP_DST is deliberately an application boundary: it receives a complete IP
 packet from APP_F and passes it to APP_SRC, whose single TUN file descriptor

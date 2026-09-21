@@ -3,21 +3,21 @@
 Topology:
 
     10.5.0.0/24                 10.100.0.0/24                 10.6.0.0/24
- PC_5 -------- COMM_5 ================================= COMM_6 -------- PC_6
+ PC_5 -------- CMM_5 ================================= CMM_6 -------- PC_6
  .2       .1       .5                                      .6       .1     .2
                      backbone / UDP tunnel
 
 Packet path in either direction:
 
- PC -> COMM kernel -> tun0 -> APP_SRC -> Unix datagram IPC -> APP_F
+ PC -> CMM kernel -> tun0 -> APP_SRC -> Unix datagram IPC -> APP_F
     -> UDP/5000 over backbone -> APP_F -> Unix datagram IPC -> APP_DST
-    -> tun0 -> COMM kernel -> remote PC
+    -> tun0 -> CMM kernel -> remote PC
 
 The two PC containers are attached only to their local LAN. They have no Docker
-interface on `backbone`, so they cannot directly access the COMM backbone NIC/network.
+interface on `backbone`, so they cannot directly access the CMM backbone NIC/network.
 The `lan5`, `lan6`, and `backbone` Docker networks are also marked `internal: true`.
 The LAN Docker bridge gateways are `10.5.0.254` and `10.6.0.254`; `.1` is
-reserved for `COMM_5` and `COMM_6`, which act as the PCs' routers.
+reserved for `CMM_5` and `CMM_6`, which act as the PCs' routers.
 
 ## Run
 
@@ -62,7 +62,7 @@ make up
 
 ### Run the C++20 implementation
 
-Set `APP_LANG=cpp` for both COMM containers. The PC containers remain unchanged;
+Set `APP_LANG=cpp` for both CMM containers. The PC containers remain unchanged;
 they only generate and receive normal IP traffic:
 
 ```sh
@@ -73,8 +73,8 @@ APP_LANG=cpp docker compose up -d --build
 The C++ processes are started internally as:
 
 ```text
-COMM_5: apps_cpp src ... / apps_cpp f ... / apps_cpp dst ...
-COMM_6: apps_cpp src ... / apps_cpp f ... / apps_cpp dst ...
+CMM_5: apps_cpp src ... / apps_cpp f ... / apps_cpp dst ...
+CMM_6: apps_cpp src ... / apps_cpp f ... / apps_cpp dst ...
 ```
 
 ### Compare the implementations
@@ -101,13 +101,13 @@ To observe the UDP packet transport while testing:
 make tcpdump
 ```
 
-`APP_LANG` only controls the applications inside `COMM_5` and `COMM_6`.
+`APP_LANG` only controls the applications inside `CMM_5` and `CMM_6`.
 `PC_5` and `PC_6` always use the same Ubuntu tools and network configuration.
 
 ## Fixed-size APP_F payloads and packet framing
 
 `APP_F` can be configured with a fixed UDP payload size from 28 to 11,200
-bytes. Set the same value in both COMM containers with `APP_F_PAYLOAD`:
+bytes. Set the same value in both CMM containers with `APP_F_PAYLOAD`:
 
 ```sh
 APP_LANG=python APP_F_PAYLOAD=1600 docker compose up -d --build
@@ -134,28 +134,28 @@ LAN through `tun0`:
 
 ```text
 PC_5:     10.6.0.0/24 via 10.5.0.1
-COMM_5:   10.6.0.0/24 dev tun0
-COMM_6:   10.5.0.0/24 dev tun0
+CMM_5:   10.6.0.0/24 dev tun0
+CMM_6:   10.5.0.0/24 dev tun0
 PC_6:     10.5.0.0/24 via 10.6.0.1
 ```
 
-When PC_5 sends an IP packet to PC_6, Linux on COMM_5 sees the packet arrive
+When PC_5 sends an IP packet to PC_6, Linux on CMM_5 sees the packet arrive
 on its LAN-side virtual Ethernet interface. Its routing table matches the
 remote-LAN route and sends the packet to `tun0`, rather than to the backbone
 Ethernet interface. `APP_SRC` reads that packet from TUN and hands it to
 `APP_F` through Unix IPC. The two APP_F processes carry it as a UDP payload
 across the backbone.
 
-On COMM_6, `APP_DST` and `APP_SRC` write the received IP packet into `tun0`.
-Writing to TUN injects the packet back into the COMM_6 Linux networking stack;
+On CMM_6, `APP_DST` and `APP_SRC` write the received IP packet into `tun0`.
+Writing to TUN injects the packet back into the CMM_6 Linux networking stack;
 it is not an Ethernet transmission by itself. Linux examines the destination
 (`10.6.0.2`), selects the connected LAN route, and emits a new Ethernet frame
-through COMM_6's LAN-side virtual Ethernet interface. Docker's bridge delivers
+through CMM_6's LAN-side virtual Ethernet interface. Docker's bridge delivers
 that frame to PC_6. The reverse direction follows the same process.
 
 The C++ applications cannot perform all of this setup alone. Docker must create
-`/dev/net/tun`, grant the COMM containers network administration privileges, and
-attach the containers to the three isolated networks. `comm-init.sh` enables IP
+`/dev/net/tun`, grant the CMM containers network administration privileges, and
+attach the containers to the three isolated networks. `cmm-init.sh` enables IP
 forwarding, disables problematic reverse-path filtering, brings `tun0` up, and
 installs the remote-LAN route. `pc-init.sh` changes each PC's default gateway.
 These are intentionally visible shell-level networking operations so the
@@ -200,7 +200,7 @@ network gateways, recreate the networks first:
 
 ```sh
 docker compose down
-docker network rm docker_comm_tunnel_lan5 docker_comm_tunnel_lan6 docker_comm_tunnel_backbone
+docker network rm docker_cmm_tunnel_lan5 docker_cmm_tunnel_lan6 docker_cmm_tunnel_backbone
 docker compose up -d --build
 ```
 
@@ -209,9 +209,9 @@ Check routes/interfaces:
 ```sh
 docker exec PC_5 ip addr
 docker exec PC_5 ip route
-docker exec COMM_5 ip addr
-docker exec COMM_5 ip route
-docker exec COMM_6 ip addr
+docker exec CMM_5 ip addr
+docker exec CMM_5 ip route
+docker exec CMM_6 ip addr
 docker exec PC_6 ip route
 ```
 
@@ -244,17 +244,17 @@ docker exec PC_5 iperf -c 10.6.0.2 -d -t 10
 Observe the backbone encapsulation:
 
 ```sh
-docker exec COMM_5 tcpdump -ni any udp port 5000
+docker exec CMM_5 tcpdump -ni any udp port 5000
 ```
 
 ## Important design point
 
 APP_SRC/APP_DST cannot be ordinary TCP/UDP proxies if the requirement is that an
 unmodified `iperf` connection addressed to PC_6 traverses all three applications.
-The COMM kernel must hand complete IP packets to userspace. A Linux TUN interface
+The CMM kernel must hand complete IP packets to userspace. A Linux TUN interface
 provides that boundary. APP_SRC reads outbound IP packets from TUN; APP_DST writes
 received IP packets back to the same TUN. Thus TCP endpoints remain PC_5 and PC_6,
-while the COMM applications transport their IP packets.
+while the CMM applications transport their IP packets.
 
 This is intentionally a functional lab implementation. For production/high-rate
 use, replace Python/Unix datagrams with the target C++ IPC mechanism, add framing,

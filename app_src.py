@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""APP_SRC: the COMM-side IP-packet ingress/egress adapter.
+"""APP_SRC: the CMM-side IP-packet ingress/egress adapter.
 
 A TUN device is a virtual layer-3 (IP) network interface.  The Linux kernel
 routes packets for the remote LAN to tun0, and reading tun0 gives us complete

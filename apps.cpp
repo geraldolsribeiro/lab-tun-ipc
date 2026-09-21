@@ -1,5 +1,5 @@
 /*
- * apps.cpp - C++20 teaching implementation of the three COMM applications.
+ * apps.cpp - C++20 teaching implementation of the three CMM applications.
  *
  * The lab deliberately transports IP packets instead of application data:
  *
@@ -13,21 +13,21 @@
  *
  * IMPORTANT SETUP NOTE:
  * This source moves packets, but it does not configure the network topology.
- * Docker must provide /dev/net/tun and the COMM container must have the
+ * Docker must provide /dev/net/tun and the CMM container must have the
  * privilege/CAP_NET_ADMIN needed for TUNSETIFF.  Outside this file,
- * comm-init.sh enables IPv4 forwarding, disables reverse-path filtering,
+ * cmm-init.sh enables IPv4 forwarding, disables reverse-path filtering,
  * brings tun0 up, and adds the remote-LAN route via `ip route`.  pc-init.sh
- * changes each PC's default gateway to its local COMM address.  Without those
+ * changes each PC's default gateway to its local CMM address.  Without those
  * routes, packets never reach TUN; without forwarding/rp_filter setup, Linux
  * may drop packets even when the applications are running.
  *
  * Traffic direction detail:
- * - A packet arriving from a PC on the COMM LAN veth is routed by Linux to
+ * - A packet arriving from a PC on the CMM LAN veth is routed by Linux to
  *   tun0 because the remote-LAN route is more specific than the default route.
  * - Reading the TUN descriptor removes the packet from the kernel-to-userspace
  *   queue; APP_SRC sends it through IPC and APP_F sends it over UDP.
  * - Writing a received packet to TUN injects it into the kernel. Linux then
- *   routes it out the COMM LAN veth, where the Docker bridge turns it into an
+ *   routes it out the CMM LAN veth, where the Docker bridge turns it into an
  *   Ethernet frame delivered to the destination PC. Writing to TUN is not
  *   itself an Ethernet transmission: Linux routing performs that final step.
  *
@@ -106,7 +106,7 @@ static int make_unix_socket(const std::string &path, bool bind_it) {
 // TUN is layer 3: reads and writes contain IP packets without Ethernet headers.
 static int open_tun(const std::string &name) {
   // The container needs /dev/net/tun and CAP_NET_ADMIN (provided by privileged
-  // COMM containers).  Failure here usually means missing device/permission.
+  // CMM containers).  Failure here usually means missing device/permission.
   int fd = open("/dev/net/tun", O_RDWR);
   if (fd < 0)
     throw std::runtime_error("open(/dev/net/tun): " +
@@ -178,7 +178,7 @@ static void run_dst(const char *from_f, const char *to_src) {
   }
 }
 
-// APP_F bridges local IPC and the remote COMM_F over UDP on the backbone.
+// APP_F bridges local IPC and the remote CMM_F over UDP on the backbone.
 // UDP is connectionless: sendto() names the destination on every datagram.
 static void run_f(const char *from_src, const char *to_dst, const char *local,
                   const char *remote) {

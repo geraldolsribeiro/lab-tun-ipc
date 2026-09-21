@@ -9,30 +9,30 @@ services:
       lan5:
         ipv4_address: 10.5.0.2
 
-  comm_5:
+  cmm_5:
     build: .
-    container_name: COMM_5
-    hostname: COMM_5
+    container_name: CMM_5
+    hostname: CMM_5
     privileged: true
     environment:
       APP_LANG: ${APP_LANG:-python}
       APP_F_PAYLOAD: ${APP_F_PAYLOAD:-1600}
-    command: ["/opt/lab/comm-init.sh", "5"]
+    command: ["/opt/lab/cmm-init.sh", "5"]
     networks:
       lan5:
         ipv4_address: 10.5.0.1
       backbone:
         ipv4_address: 10.100.0.5
 
-  comm_6:
+  cmm_6:
     build: .
-    container_name: COMM_6
-    hostname: COMM_6
+    container_name: CMM_6
+    hostname: CMM_6
     privileged: true
     environment:
       APP_LANG: ${APP_LANG:-python}
       APP_F_PAYLOAD: ${APP_F_PAYLOAD:-1600}
-    command: ["/opt/lab/comm-init.sh", "6"]
+    command: ["/opt/lab/cmm-init.sh", "6"]
     networks:
       lan6:
         ipv4_address: 10.6.0.1
@@ -51,6 +51,7 @@ services:
 
 networks:
   lan5:
+    name: docker_cmm_tunnel_lan5
     driver: bridge
     internal: true
     ipam:
@@ -58,6 +59,7 @@ networks:
         - subnet: 10.5.0.0/24
           gateway: 10.5.0.254
   lan6:
+    name: docker_cmm_tunnel_lan6
     driver: bridge
     internal: true
     ipam:
@@ -65,6 +67,7 @@ networks:
         - subnet: 10.6.0.0/24
           gateway: 10.6.0.254
   backbone:
+    name: docker_cmm_tunnel_backbone
     driver: bridge
     internal: true
     ipam:

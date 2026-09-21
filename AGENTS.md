@@ -7,120 +7,120 @@ Implement a minimal bidirectional Layer-3 tunnel in modern C++20 using Linux TUN
 The tunnel connects two otherwise independent IPv4 networks:
 
 ```text
-192.168.105.0/24                              192.168.106.0/24
+10.5.0.0/24                                      10.6.0.0/24
 
- PC5                 FPU5                      FPU6                 PC6
- .105.50             .105.5                    .106.6               .106.60
-    |                   |                         |                    |
-    +------ eno1 --------+                         +------ eno1 --------+
-                        |                         |
-                    Linux routing             Linux routing
-                        |                         |
-                       tun0                      tun0
-                        |                         |
-                      APP5 ===================== APP6
-                            custom transport
+ PC_5                    CMM_5                 CMM_6                    PC_6
+10.5.0.2              LAN 10.5.0.1          LAN 10.6.0.1              10.6.0.2
+   |                        |                     |                        |
+   +-------- lan5 ----------+                     +---------- lan6 ----------+
+                            |                     |
+                         tun0                   tun0
+                            |                     |
+                 APP_SRC / APP_F / APP_DST on both CMM containers
+                            |                     |
+             backbone/eno1 10.100.0.5 <-> 10.100.0.6 backbone/eno1
+                            UDP fixed-size transport
 ```
+
+`tun0` is the application-facing Layer-3 interface inside each CMM container.
+It is not an Ethernet interface. Its IP address is optional and is not used
+for CMM-to-CMM transport. The tunnel must work with an unaddressed TUN.
+Linux routes remote-LAN
+packets from the LAN veth to `tun0`; the applications read and write packets
+there. APP_F then carries those packets as fixed-size UDP payloads through the
+CMM backbone interface (`eno1` in the conceptual diagram). Thus TUN is between
+the Linux routing stack and the applications, while the backbone Ethernet
+interface is used by APP_F for inter-CMM transport.
 
 Target test:
 
 ```bash
-# PC6
+# PC_6
 iperf -s
 
-# PC5
-iperf -c 192.168.106.60
+# PC_5
+iperf -c 10.6.0.2
 ```
 
 Traffic must preserve the original addresses:
 
 ```text
-source      192.168.105.50
-destination 192.168.106.60
+source      10.5.0.2
+destination 10.6.0.2
 ```
 
 The reverse direction must work as well.
 
 ---
 
-## Critical Architecture Constraint
+## Transport Architecture Constraint
 
-There MUST NOT be an IP network between FPU5 and FPU6.
+The production tunnel should expose an abstract/custom transport interface. For
+this Docker lab, that transport is implemented using UDP over a dedicated,
+isolated backbone network. Only CMM containers attach to the backbone; PC
+containers have no interface or route on it.
 
-Do NOT implement:
+The backbone is an implementation detail of the lab transport, not a network
+available to the endpoint PCs. Do not NAT, bridge, or expose it to PC_5 or PC_6.
 
-```text
-FPU5 tun0 = 10.0.0.5
-FPU6 tun0 = 10.0.0.6
-```
-
-Do NOT create an IP subnet for the TUN endpoints.
-
-Do NOT assume APP5 can reach APP6 using TCP, UDP, IP routing, ARP, or any other IP-based mechanism.
-
-The transport between APP5 and APP6 is an abstract/custom non-IP transport.
-
-The application transports opaque IP packets.
-
-Conceptually:
+Each CMM container runs all three applications:
 
 ```text
-Linux FPU5
-    |
-    | route 192.168.106.0/24 dev tun0
-    v
-  tun0
-    |
-    | read()
-    v
-  APP5
-    |
-    | opaque non-IP transport
-    v
-  APP6
-    |
-    | write()
-    v
-  tun0
-    |
-    v
-Linux FPU6
-    |
-    | normal routing
-    v
-  eno1
-    |
-    v
- PC6
+CMM_5: APP_SRC <-> APP_F <-> UDP backbone <-> APP_F <-> APP_DST
+CMM_6: APP_SRC <-> APP_F <-> UDP backbone <-> APP_F <-> APP_DST
 ```
 
-The reverse path must be symmetrical.
+The tunnel is bidirectional. On either side, APP_SRC reads locally routed
+packets from TUN and sends them through the local APP_F. The remote APP_F
+passes them to APP_DST, which injects them into the local Linux stack through
+TUN. Return traffic follows the same path in reverse.
+
+The application transports opaque IP packets. It must not modify addresses,
+perform NAT, or parse TCP/UDP application payloads.
+
+Conceptually for PC_5 -> PC_6:
+
+```text
+Linux CMM_5 -> tun0 -> APP_SRC -> APP_F
+           -> UDP backbone -> APP_F -> APP_DST -> APP_SRC -> tun0 -> Linux CMM_6
+```
+
+PC_6 -> PC_5 uses the identical architecture in reverse.
+
+Backbone network:
+
+```text
+10.100.0.0/24
+CMM_5: 10.100.0.5
+CMM_6: 10.100.0.6
+UDP port: 5000
+```
 
 ---
 
 # Linux Networking Model
 
-## FPU5
+## CMM_5
 
 Physical interface:
 
 ```text
 eno1
-192.168.105.5/24
+10.5.0.1/24
 ```
 
 TUN:
 
 ```text
 tun0
-NO IP ADDRESS
+(unaddressed; optional diagnostic address)
 MTU initially 1500
 ```
 
 Route:
 
 ```bash
-ip route replace 192.168.106.0/24 dev tun0
+ip route replace 10.6.0.0/24 dev tun0
 ```
 
 Enable forwarding:
@@ -132,7 +132,7 @@ sysctl -w net.ipv4.ip_forward=1
 Expected packet flow:
 
 ```text
-PC5
+PC_5
  |
 eno1
  |
@@ -142,32 +142,32 @@ routing
  |
 tun0
  |
-APP5
+APP_SRC/APP_F/APP_DST on CMM_5
 ```
 
 ---
 
-## FPU6
+## CMM_6
 
 Physical interface:
 
 ```text
 eno1
-192.168.106.6/24
+10.6.0.1/24
 ```
 
 TUN:
 
 ```text
 tun0
-NO IP ADDRESS
+(unaddressed; optional diagnostic address)
 MTU initially 1500
 ```
 
 Route:
 
 ```bash
-ip route replace 192.168.105.0/24 dev tun0
+ip route replace 10.5.0.0/24 dev tun0
 ```
 
 Enable forwarding:
@@ -179,7 +179,7 @@ sysctl -w net.ipv4.ip_forward=1
 Expected packet flow:
 
 ```text
-APP6
+APP_SRC/APP_F/APP_DST on CMM_6
  |
 tun0
  |
@@ -189,35 +189,35 @@ routing
  |
 eno1
  |
-PC6
+PC_6
 ```
 
 ---
 
 # PC Configuration
 
-## PC5
+## PC_5
 
 ```text
-IP: 192.168.105.50/24
+IP: 10.5.0.2/24
 ```
 
 Route:
 
 ```bash
-ip route replace 192.168.106.0/24 via 192.168.105.5
+ip route replace 10.6.0.0/24 via 10.5.0.1
 ```
 
-## PC6
+## PC_6
 
 ```text
-IP: 192.168.106.60/24
+IP: 10.6.0.2/24
 ```
 
 Route:
 
 ```bash
-ip route replace 192.168.105.0/24 via 192.168.106.6
+ip route replace 10.5.0.0/24 via 10.6.0.1
 ```
 
 No NAT should be used.
@@ -243,8 +243,8 @@ Example:
 ```text
 +-----------------------------+
 | IPv4                        |
-| src = 192.168.105.50        |
-| dst = 192.168.106.60        |
+| src = 10.5.0.2        |
+| dst = 10.6.0.2        |
 +-----------------------------+
 | TCP                         |
 +-----------------------------+
@@ -272,7 +272,7 @@ the application obtains it with:
 read(tun_fd, buffer, size);
 ```
 
-When the application receives a packet from the remote FPU:
+When the application receives a packet from the remote CMM container:
 
 ```text
 remote transport -> application -> tun0 -> Linux
@@ -326,7 +326,9 @@ Responsibilities:
 * read IP packets
 * write IP packets
 
-Do not configure IP addresses on `tun0`.
+The TUN IP address is optional and must not be required for packet transport.
+If configured for diagnostics or a future control plane, do not use it as a
+CMM-to-CMM transport endpoint.
 
 Prefer Linux networking configuration in shell scripts rather than embedding `ip` or `sysctl` commands into the application.
 
@@ -334,7 +336,7 @@ Prefer Linux networking configuration in shell scripts rather than embedding `ip
 
 ## Transport
 
-Define an interface independent of the actual FPU5/FPU6 transport.
+Define an interface independent of the actual CMM_5/CMM_6 transport.
 
 For example:
 
@@ -349,31 +351,34 @@ public:
 };
 ```
 
-The tunnel implementation MUST NOT depend on TCP, UDP, IP addresses, or Ethernet.
+The TUN packet-routing layer must remain independent of the transport
+implementation. APP_F may use UDP, IP addresses, and Ethernet because those
+belong to the isolated CMM backbone. PC containers must not access the backbone
+directly. The tunnel must not perform NAT or modify packet addresses.
 
-The real transport will be supplied/replaced independently.
+The UDP transport can be replaced independently without changing TUN handling.
 
 ---
 
-# Initial Development Transport
+# Application Transport
 
-For development and unit/integration testing, implement a transport that can run locally without changing the tunnel architecture.
+APP_SRC, APP_F, and APP_DST run inside each CMM container. APP_SRC and APP_F,
+and APP_F and APP_DST, communicate through Unix-domain datagram sockets. These
+sockets are local IPC only and never connect the two CMM containers.
 
-Suitable choices include:
+APP_F communicates between CMM_5 and CMM_6 using UDP over the isolated
+10.100.0.0/24 backbone. The UDP payload has a configurable fixed size from
+28 bytes through 11,200 bytes. The framing layer must:
 
-```text
-Unix domain SOCK_SEQPACKET
-```
+* preserve packet order
+* support multiple IP packets in one payload
+* split a packet across payloads when necessary
+* reassemble packets before writing them to TUN
+* pad every UDP datagram to the configured size
+* reject malformed frames and unreasonable packet lengths
 
-or another message-preserving local IPC mechanism.
-
-Prefer `AF_UNIX + SOCK_SEQPACKET`.
-
-This is only a development/test transport.
-
-Do not design the core tunnel around Unix sockets.
-
-The production transport remains abstract and non-IP.
+The packet-routing code should remain independent from APP_F so a future custom
+transport can replace UDP without changing TUN handling.
 
 ---
 
@@ -551,58 +556,60 @@ Do not require the application to run permanently as root if capabilities can be
 
 # Setup Scripts
 
-Create:
+The current Docker implementation uses these scripts:
 
 ```text
-scripts/setup-pc5.sh
-scripts/setup-fpu5.sh
-scripts/setup-fpu6.sh
-scripts/setup-pc6.sh
+pc-init.sh   # configures the PC container's default route
+cmm-init.sh  # configures CMM forwarding, TUN, routes, and applications
 ```
 
-FPU5 setup:
+Docker Compose passes the side number to `cmm-init.sh`, so the same script
+configures both CMM_5 and CMM_6. The PC containers pass their local address and
+CMM gateway to `pc-init.sh`.
+
+CMM_5 setup:
 
 ```bash
 #!/bin/bash
 set -euo pipefail
 
 ip link set tun0 mtu 1500 up
-ip route replace 192.168.106.0/24 dev tun0
+ip route replace 10.6.0.0/24 dev tun0
 
 sysctl -w net.ipv4.ip_forward=1
 ```
 
-FPU6:
+CMM_6:
 
 ```bash
 #!/bin/bash
 set -euo pipefail
 
 ip link set tun0 mtu 1500 up
-ip route replace 192.168.105.0/24 dev tun0
+ip route replace 10.5.0.0/24 dev tun0
 
 sysctl -w net.ipv4.ip_forward=1
 ```
 
-PC5:
+PC_5:
 
 ```bash
 #!/bin/bash
 set -euo pipefail
 
-ip route replace 192.168.106.0/24 via 192.168.105.5
+ip route replace 10.6.0.0/24 via 10.5.0.1
 ```
 
-PC6:
+PC_6:
 
 ```bash
 #!/bin/bash
 set -euo pipefail
 
-ip route replace 192.168.105.0/24 via 192.168.106.6
+ip route replace 10.5.0.0/24 via 10.6.0.1
 ```
 
-Account for the fact that `tun0` must exist before the FPU setup script configures it.
+Account for the fact that `tun0` must exist before the CMM setup script configures it.
 
 If useful, separate TUN creation from route configuration.
 
@@ -615,11 +622,11 @@ Add optional diagnostic logging.
 For every packet, debug mode may report:
 
 ```text
-RX TUN  len=1500 src=192.168.105.50 dst=192.168.106.60
+RX TUN  len=1500 src=10.5.0.2 dst=10.6.0.2
 TX LINK len=1500
 
 RX LINK len=52
-TX TUN  len=52 src=192.168.106.60 dst=192.168.105.50
+TX TUN  len=52 src=10.6.0.2 dst=10.5.0.2
 ```
 
 Do not log every packet by default because this will significantly affect iperf throughput.
@@ -658,10 +665,10 @@ No IP address should be assigned.
 
 ## Test 2 — Routing
 
-FPU5:
+CMM_5:
 
 ```bash
-ip route get 192.168.106.60
+ip route get 10.6.0.2
 ```
 
 must select:
@@ -670,10 +677,10 @@ must select:
 dev tun0
 ```
 
-FPU6:
+CMM_6:
 
 ```bash
-ip route get 192.168.105.50
+ip route get 10.5.0.2
 ```
 
 must select:
@@ -692,27 +699,27 @@ Use:
 tcpdump -ni tun0
 ```
 
-On FPU5, attempting:
+On CMM_5, attempting:
 
 ```bash
-ping 192.168.106.60
+ping 10.6.0.2
 ```
 
-from PC5 should result in IP packets appearing on FPU5 `tun0`.
+from PC_5 should result in IP packets appearing on CMM_5 `tun0`.
 
 ---
 
 ## Test 4 — End-to-end ping
 
-Once APP5/APP6 transport is connected:
+Once APP_SRC/APP_F/APP_DST on CMM_5/APP_SRC/APP_F/APP_DST on CMM_6 transport is connected:
 
 ```bash
-PC5$ ping 192.168.106.60
+PC_5$ ping 10.6.0.2
 ```
 
 must succeed.
 
-Verify both FPUs:
+Verify both CMM containers:
 
 ```bash
 tcpdump -ni tun0 icmp
@@ -722,16 +729,16 @@ tcpdump -ni tun0 icmp
 
 ## Test 5 — iperf
 
-PC6:
+PC_6:
 
 ```bash
 iperf -s
 ```
 
-PC5:
+PC_5:
 
 ```bash
-iperf -c 192.168.106.60
+iperf -c 10.6.0.2
 ```
 
 Then test the reverse direction.
@@ -747,58 +754,42 @@ Do NOT implement:
 * GRE
 * WireGuard
 * OpenVPN
-* TCP tunnel between FPU5/FPU6
-* UDP tunnel between FPU5/FPU6
+* a TCP application proxy between CMM_5/CMM_6
+* exposing the backbone network to PC_5 or PC_6
 * TAP/Ethernet bridging
 * ARP forwarding across the tunnel
 * IP addresses on `tun0`
-* an IP subnet between FPU5 and FPU6
+* an IP subnet between CMM_5 and CMM_6
 
-The purpose of this project is specifically to transport IP packets through an existing/custom non-IP FPU-to-FPU application transport.
+The purpose of this project is to transport opaque IP packets through APP_SRC, APP_F, and APP_DST over the isolated UDP backbone.
 
 ---
 
 # Build System
 
-Use CMake.
+Use a plain GNU Makefile rather than CMake.
+
+The Makefile should provide targets for:
+
+* building the C++20 implementation
+* rebuilding Docker images
+* starting and stopping the lab
+* running ping and iperf tests
+* capturing backbone traffic with tcpdump
+* cleaning generated images, containers, and networks
 
 Minimum:
 
 ```text
 C++20
 Linux
+GNU Make
 GCC/Clang
 ```
 
-Keep dependencies minimal.
-
-Prefer Linux/POSIX APIs and the C++ standard library.
-
-Do not add Boost unless a concrete requirement makes it necessary.
-
-Suggested layout:
-
-```text
-.
-├── AGENTS.md
-├── CMakeLists.txt
-├── README.md
-├── src
-│   ├── main.cpp
-│   ├── tun_device.cpp
-│   ├── tun_device.hpp
-│   ├── tunnel.cpp
-│   ├── tunnel.hpp
-│   ├── transport.hpp
-│   ├── unix_transport.cpp
-│   └── unix_transport.hpp
-├── tests
-└── scripts
-    ├── setup-pc5.sh
-    ├── setup-fpu5.sh
-    ├── setup-fpu6.sh
-    └── setup-pc6.sh
-```
+Keep dependencies minimal. Prefer Linux/POSIX APIs and the C++ standard
+library. Do not add Boost unless a concrete requirement makes it necessary.
+The Docker build may install the compiler and required Linux networking tools.
 
 ---
 
@@ -819,7 +810,7 @@ Implement in this order:
 
 Keep each stage independently testable.
 
-Do not implement the production FPU-to-FPU transport until the TUN packet path has been demonstrated using the test transport.
+Keep the packet-routing path separate from the UDP backbone implementation so the transport can later be replaced without changing TUN handling.
 
 ---
 
@@ -829,13 +820,13 @@ The implementation is complete when the following path works without NAT:
 
 ```text
 iperf client
-192.168.105.50
+10.5.0.2
 
        |
        v
 
-FPU5 eno1
-192.168.105.5
+CMM_5 eno1
+10.5.0.1
 
        |
        v
@@ -848,11 +839,11 @@ Linux routing
 tun0
        |
        v
-APP5
+APP_SRC/APP_F/APP_DST on CMM_5
        |
        | opaque/custom transport
        v
-APP6
+APP_SRC/APP_F/APP_DST on CMM_6
        |
        v
 tun0
@@ -865,25 +856,25 @@ Linux routing
        |
        v
 
-FPU6 eno1
-192.168.106.6
+CMM_6 eno1
+10.6.0.1
 
        |
        v
 
 iperf server
-192.168.106.60
+10.6.0.2
 ```
 
-The TCP connection observed by PC6 must retain:
+The TCP connection observed by PC_6 must retain:
 
 ```text
-source = 192.168.105.50
+source = 10.5.0.2
 ```
 
 and the reverse packets must return through the same tunnel architecture.
 
-The application must not require or establish IP connectivity between FPU5 and FPU6.
+The application uses the dedicated 10.100.0.0/24 backbone between CMM_5 and CMM_6; PC_5 and PC_6 must not be attached to or route through that backbone.
 
-One design choice I made deliberately is to define the FPU-to-FPU transport as a `Transport` interface and use `AF_UNIX/SOCK_SEQPACKET` only as a test implementation. This should let Codex prove the TUN/routing architecture first, then replace the test transport with your actual FPU transport without touching the packet-routing code.
+The packet-routing code should remain separated from the APP_F transport code so the UDP backbone transport can later be replaced without changing TUN handling.
 

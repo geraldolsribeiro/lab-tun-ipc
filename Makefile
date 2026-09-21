@@ -3,7 +3,7 @@
 COMPOSE := docker compose
 PC5 := PC_5
 PC6 := PC_6
-COMM5 := COMM_5
+CMM5 := CMM_5
 
 .PHONY: build rebuild up down restart ps logs ping iperf tcpdump clean help
 
@@ -35,11 +35,11 @@ iperf:
 	docker exec $(PC5) iperf -c 10.6.0.2 -b 40m -t 10
 
 tcpdump:
-	docker exec $(COMM5) tcpdump -ni any udp port 5000
+	docker exec $(CMM5) tcpdump -ni any udp port 5000
 
 clean:
 	$(COMPOSE) down --rmi local --remove-orphans
-	-docker network rm docker_comm_tunnel_lan5 docker_comm_tunnel_lan6 docker_comm_tunnel_backbone
+	-docker network rm docker_cmm_tunnel_lan5 docker_cmm_tunnel_lan6 docker_cmm_tunnel_backbone
 
 help:
 	@echo "Targets: build rebuild up down restart ps logs ping iperf tcpdump clean"
