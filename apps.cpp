@@ -47,6 +47,7 @@
 #include <linux/if_tun.h> // TUNSETIFF, IFF_TUN, IFF_NO_PI
 #include <net/if.h>       // struct ifreq and IFNAMSIZ
 #include <netinet/in.h>   // sockaddr_in, htons()
+#include <netinet/ip.h>   // struct iphdr for minimal IPv4 validation
 #include <poll.h>         // pollfd and poll(): wait on several descriptors
 #include <stdexcept>      // std::runtime_error
 #include <string>         // std::string
@@ -138,6 +139,17 @@ static sockaddr_in parse_endpoint(const std::string &text) {
   return result;
 }
 
+// Validate the IPv4 envelope without interpreting the transport payload.
+// Addresses, ports, flags, and checksums are deliberately left untouched.
+static bool valid_ipv4_packet(const char *packet, std::size_t size) {
+  if (size < sizeof(iphdr)) return false;
+  const auto *header = reinterpret_cast<const iphdr *>(packet);
+  if (header->version != 4 || header->ihl < 5) return false;
+  const std::size_t header_bytes = header->ihl * 4u;
+  const std::size_t total_bytes = ntohs(header->tot_len);
+  return header_bytes <= total_bytes && total_bytes == size && total_bytes <= MAX_PACKET_SIZE;
+}
+
 // APP_SRC owns the one TUN descriptor.  poll() waits for either direction:
 // TUN readable means kernel -> tunnel; return IPC readable means tunnel -> PC.
 static void run_src(const char *tun_name, const char *to_f,
@@ -161,7 +173,7 @@ static void run_src(const char *tun_name, const char *to_f,
       // A remote packet has completed the tunnel. Inject it into the kernel;
       // Linux then uses its connected LAN route to deliver it to the PC.
       auto size = recv(from_dst_fd, packet, sizeof(packet), 0);
-      if (size > 0)
+      if (size > 0 && valid_ipv4_packet(packet, static_cast<std::size_t>(size)))
         write(tun_fd, packet, size);
     }
   }

@@ -18,7 +18,7 @@ The tunnel connects two otherwise independent IPv4 networks:
                             |                     |
                  APP_SRC / APP_F / APP_DST on both CMM containers
                             |                     |
-             backbone/eno1 10.100.0.5 <-> 10.100.0.6 backbone/eno1
+             backbone/eth0 10.100.0.5 <-> 10.100.0.6 backbone/eth0
                             UDP fixed-size transport
 ```
 
@@ -28,7 +28,7 @@ for CMM-to-CMM transport. The tunnel must work with an unaddressed TUN.
 Linux routes remote-LAN
 packets from the LAN veth to `tun0`; the applications read and write packets
 there. APP_F then carries those packets as fixed-size UDP payloads through the
-CMM backbone interface (`eno1` in the conceptual diagram). Thus TUN is between
+CMM backbone interface (`eth0` in the Docker containers). Thus TUN is between
 the Linux routing stack and the applications, while the backbone Ethernet
 interface is used by APP_F for inter-CMM transport.
 
@@ -105,7 +105,7 @@ UDP port: 5000
 Physical interface:
 
 ```text
-eno1
+eth1
 10.5.0.1/24
 ```
 
@@ -152,7 +152,7 @@ APP_SRC/APP_F/APP_DST on CMM_5
 Physical interface:
 
 ```text
-eno1
+eth1
 10.6.0.1/24
 ```
 
@@ -288,7 +288,7 @@ Writing to `tun0` means:
 
 > Inject this IP packet into the Linux networking stack as a packet received from this virtual interface.
 
-Do NOT attempt to write the received packet directly to `eno1`.
+Do NOT attempt to write the received packet directly to the LAN interface (`eth1`).
 
 Linux must remain responsible for:
 
@@ -659,7 +659,7 @@ Expected:
 tun0 UP
 ```
 
-No IP address should be assigned.
+A TUN IP address is not required for packet transport. If one is assigned for diagnostics or future control-plane use, it must not be used as the CMM-to-CMM transport endpoint.
 
 ---
 
@@ -825,7 +825,7 @@ iperf client
        |
        v
 
-CMM_5 eno1
+CMM_5 eth1 (LAN; eth0 is backbone)
 10.5.0.1
 
        |
@@ -856,7 +856,7 @@ Linux routing
        |
        v
 
-CMM_6 eno1
+CMM_6 eth1 (LAN; eth0 is backbone)
 10.6.0.1
 
        |
